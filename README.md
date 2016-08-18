@@ -62,5 +62,5 @@
 0. Clone project repository
 
     ```bash
-    git clone http://dev.2bite.com:14711/stmharry/ResidualNetwork.git
+    git clone http://dev.2bite.com:14711/stmharry/ResidualNetworkV2.git
     ```
