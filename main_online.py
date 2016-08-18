@@ -69,7 +69,7 @@ class Query(object):
 
         self.probs = np.concatenate(probs, axis=0)
 
-    def get_json(self):
+    def to_json(self):
         json_dict = collections.OrderedDict()
         for (url, prob) in zip(self.urls, self.probs):
             index = np.argsort(prob)[::-1]
@@ -82,3 +82,4 @@ def query_from_file(filename):
 
 if __name__ == '__main__':
     query = query_from_file('query.txt')
+    print(query.to_json())
