@@ -19,43 +19,43 @@ class Meta(object):
     CLASS_NAMES = list()
 
     @staticmethod
-    def classnamesPath():
-        return os.path.join(Meta.WORKING_DIR, Meta.CLASSNAMES_FILENAME)
-
-    @staticmethod
-    def save(class_names=CLASS_NAMES):
-        Meta.CLASS_NAMES = class_names
-
+    def train(image_dir, working_dir=WORKING_DIR):
+        Meta.WORKING_DIR = working_dir
         if not os.path.isdir(Meta.WORKING_DIR):
             os.makedirs(Meta.WORKING_DIR)
-        np.savetxt(Meta.classnamesPath(), Meta.CLASS_NAMES, delimiter=',', fmt='%s')
+
+        Meta.CLASS_NAMES = list()
+        for class_name in os.listdir(image_dir):
+            class_dir = os.path.join(image_dir, class_name)
+            if not class_name.startswith('.') and os.path.isdir(class_dir):
+                Meta.CLASS_NAMES.append(class_name)
+        np.savetxt(os.path.join(Meta.WORKING_DIR, Meta.CLASSNAMES_FILENAME), Meta.CLASS_NAMES, delimiter=',', fmt='%s')
 
     @staticmethod
-    def load(working_dir=WORKING_DIR):
+    def test(working_dir=WORKING_DIR):
         Meta.WORKING_DIR = working_dir
 
-        if os.path.isfile(Meta.classnamesPath()):
-            Meta.CLASS_NAMES = np.loadtxt(Meta.classnamesPath(), dtype=np.str, delimiter=',')
+        classnames_path = os.path.join(Meta.WORKING_DIR, Meta.CLASSNAMES_FILENAME)
+        if os.path.isfile(classnames_path):
+            Meta.CLASS_NAMES = np.loadtxt(classnames_path, dtype=np.str, delimiter=',')
 
 
 class Blob(object):
-    def __init__(self, image=None, label=None, images=None, labels=None, imageLabels=None):
-        assert (image is not None) + (images is not None) + (imageLabels is not None) == 1, 'Too many arguments!'
+    def __init__(self, **kwargs):
+        assert ('images' in kwargs) + ('values' in kwargs) == 1, 'Too many arguments!'
 
-        if image is not None:
-            label = tf.constant(-1, dtype=tf.int64) if label is None else label
-            self.image = image
-            self.label = label
+        if 'images' in kwargs:
+            images = kwargs['images']
+            if 'labels' in kwargs:
+                labels = kwargs['labels']
+            else:
+                labels = [tf.constant(-1, dtype=tf.int64) for _ in xrange(len(images))]
 
-            images = [image]
-            labels = [label]
-        elif images is not None:
-            labels = [tf.constant(-1, dtype=tf.int64) for _ in xrange(len(images))] if labels is None else labels
-        else:
-            (images, labels) = zip(*imageLabels)
-
-        self.images = images
-        self.labels = labels
+            self.images = images
+            self.labels = labels
+        elif 'values' in kwargs:
+            values = kwargs['values']
+            self.values = values
 
     def as_tuple_list(self):
         return zip(self.images, self.labels)
@@ -64,58 +64,79 @@ class Blob(object):
         return f(self)
 
 
-class Producer(object):
+class BaseProducer(object):
+    def get_queue_enqueue(self, values, dtype=tf.float32, shape=None, auto=False):
+        queue = tf.FIFOQueue(self.capacity, dtypes=[dtype], shapes=None if shape is None else [shape])
+        enqueue = queue.enqueue_many([values])
+        if auto:
+            queue_runner = tf.train.QueueRunner(queue, [enqueue])
+            tf.train.add_queue_runner(queue_runner)
+        return (queue, enqueue)
+
+
+class SimpleProducer(BaseProducer):
+    def blob(self, name='image', shape=None, dtype=tf.float32):
+        self.placeholder = tf.placeholder(
+            name=name,
+            shape=shape,
+            dtype=dtype)
+        return Blob(images=[self.placeholder])
+
+
+class QueueProducer(BaseProducer):
+    CAPACITY = 1024
+
+    def __init__(self, capacity=CAPACITY):
+        self.capacity = capacity
+
+    def blob(self, name='image', shape=None, dtype=tf.float32):
+        self.placeholder = tf.placeholder(
+            name=name,
+            shape=shape,
+            dtype=dtype)
+        (self.queue, self.enqueue) = self.get_queue_enqueue(values=[self.placeholder], dtype=dtype, shape=shape, auto=False)
+        return Blob(images=[self.queue.dequeue()])
+
+
+class FileProducer(BaseProducer):
+    CAPACITY = 32
     NUM_TRAIN_INPUTS = 8
     NUM_TEST_INPUTS = 1
     SUBSAMPLE_SIZE = 64
 
-    @staticmethod
-    def get_queue(value_list, dtype):
-        queue = tf.FIFOQueue(32, dtypes=[dtype], shapes=[()])
-        enqueue = queue.enqueue_many([value_list])
-        queue_runner = tf.train.QueueRunner(queue, [enqueue])
-        tf.train.add_queue_runner(queue_runner)
-        return queue
-
     def __init__(self,
+                 capacity=CAPACITY,
                  num_train_inputs=NUM_TRAIN_INPUTS,
                  num_test_inputs=NUM_TEST_INPUTS,
                  subsample_size=SUBSAMPLE_SIZE):
 
+        self.capacity = capacity
         self.num_train_inputs = num_train_inputs
         self.num_test_inputs = num_test_inputs
         self.subsample_size = subsample_size
 
-    def _file(self,
+    def _blob(self,
               image_dir,
               num_inputs=1,
-              subsample_size=1,
               subsample_divisible=True,
-              is_train=False,
               check=False,
               shuffle=False):
 
         filename_list = list()
         classname_list = list()
 
-        for class_name in os.listdir(image_dir):
+        for class_name in Meta.CLASS_NAMES:
             class_dir = os.path.join(image_dir, class_name)
-            if class_name.startswith('.') or not os.path.isdir(class_dir):
-                continue
             for (file_dir, _, file_names) in os.walk(class_dir):
                 for file_name in file_names:
                     if not file_name.endswith('.jpg'):
                         continue
-                    if (hash(file_name) % subsample_size == 0) != subsample_divisible:
+                    if (hash(file_name) % self.subsample_size == 0) != subsample_divisible:
                         continue
                     filename_list.append(os.path.join(file_dir, file_name))
                     classname_list.append(class_name)
 
-        class_names = sorted(set(classname_list))
-        label_list = map(class_names.index, classname_list)
-
-        if is_train:
-            Meta.save(class_names=class_names)
+        label_list = map(Meta.CLASS_NAMES.index, classname_list)
 
         if check:
             num_file_list = list()
@@ -134,53 +155,41 @@ class Producer(object):
             filename_list = map(filename_list.__getitem__, num_file_list)
             label_list = map(label_list.__getitem__, num_file_list)
 
-        imageLabels = list()
+        images = list()
+        labels = list()
         for num_input in xrange(num_inputs):
             if shuffle:
                 perm = np.random.permutation(len(filename_list))
                 filename_list = map(filename_list.__getitem__, perm)
                 label_list = map(label_list.__getitem__, perm)
 
-            filename_queue = Producer.get_queue(filename_list, dtype=tf.string)
+            filename_queue = self.get_queue_enqueue(filename_list, dtype=tf.string, shape=(), auto=True)[0]
             (key, value) = tf.WholeFileReader().read(filename_queue)
             image = tf.to_float(tf.image.decode_jpeg(value))
 
-            label_queue = Producer.get_queue(label_list, dtype=tf.int64)
+            label_queue = self.get_queue_enqueue(label_list, dtype=tf.int64, shape=(), auto=True)[0]
             label = label_queue.dequeue()
 
-            imageLabels.append((image, label))
+            images.append(image)
+            labels.append(label)
 
-        return Blob(imageLabels=imageLabels)
+        return Blob(images=images, labels=labels)
 
-    def trainFile(self,
-                  image_dir,
-                  subsample_divisible=False,
-                  is_train=True,
-                  check=True,
-                  shuffle=True):
+    def trainBlob(self, image_dir, check=True):
+        return self._blob(
+            image_dir,
+            num_inputs=self.num_train_inputs,
+            subsample_divisible=False,
+            check=check,
+            shuffle=True)
 
-        return self._file(image_dir,
-                          num_inputs=self.num_train_inputs,
-                          subsample_size=self.subsample_size,
-                          subsample_divisible=subsample_divisible,
-                          is_train=is_train,
-                          check=check,
-                          shuffle=shuffle)
-
-    def testFile(self,
-                 image_dir,
-                 subsample_divisible=True,
-                 is_train=False,
-                 check=False,
-                 shuffle=False):
-
-        return self._file(image_dir,
-                          num_inputs=self.num_test_inputs,
-                          subsample_size=self.subsample_size,
-                          subsample_divisible=subsample_divisible,
-                          is_train=is_train,
-                          check=check,
-                          shuffle=shuffle)
+    def testBlob(self, image_dir, check=False):
+        return self._blob(
+            image_dir,
+            num_inputs=self.num_test_inputs,
+            subsample_divisible=True,
+            check=check,
+            shuffle=False)
 
 
 class Preprocess(object):
@@ -244,38 +253,62 @@ class Preprocess(object):
 
 class Batch(object):
     BATCH_SIZE = 64
-    CAPACITY = 4096 + 1024
-    MIN_AFTER_DEQUEUE = 4096
     NUM_TEST_CROPS = 4
+    TRAIN_CAPACITY = 4096 + 1024
+    TEST_CAPACITY = 64
+    MIN_AFTER_DEQUEUE = 4096
 
     def __init__(self,
                  batch_size=BATCH_SIZE,
-                 capacity=CAPACITY,
-                 min_after_dequeue=MIN_AFTER_DEQUEUE,
-                 num_test_crops=NUM_TEST_CROPS):
+                 num_test_crops=NUM_TEST_CROPS,
+                 train_capacity=TRAIN_CAPACITY,
+                 test_capacity=TEST_CAPACITY,
+                 min_after_dequeue=MIN_AFTER_DEQUEUE):
 
         self.batch_size = batch_size
-        self.capacity = capacity
-        self.min_after_dequeue = min_after_dequeue
         self.num_test_crops = num_test_crops
+        self.train_capacity = train_capacity
+        self.test_capacity = test_capacity
+        self.min_after_dequeue = min_after_dequeue
+
+    def make_size(self, batch_size):
+        base_batch_size = tf.constant(batch_size, dtype=tf.int32)
+        zero = tf.constant(0, dtype=tf.int32)
+
+        real_total_size = tf.Variable(-1, trainable=False, dtype=tf.int32)
+        (real_batch_size, adjust_batch_size) = tf.cond(
+            tf.equal(real_total_size, -1),
+            lambda: (base_batch_size, zero),
+            lambda: (tf.minimum(real_total_size, base_batch_size),) * 2)
+        real_total_size_ = tf.placeholder_with_default(real_total_size - adjust_batch_size, shape=())
+        assign = real_total_size.assign(real_total_size_)
+        return (real_batch_size, real_total_size_, assign)
 
     def train(self, blob):
-        (image, label) = tf.train.shuffle_batch_join(
-            blob.as_tuple_list(),
-            batch_size=self.batch_size,
-            capacity=self.capacity,
-            min_after_dequeue=self.min_after_dequeue)
-        return Blob(image=image, label=label)
+        (self.train_batch_size, self.train_total_size, self.train_assign) = self.make_size(self.batch_size)
+
+        (image, label) = tf.tuple(
+            tf.train.shuffle_batch_join(
+                blob.as_tuple_list(),
+                batch_size=self.train_batch_size,
+                capacity=self.train_capacity,
+                min_after_dequeue=self.min_after_dequeue),
+            control_inputs=[self.train_assign])
+        return Blob(images=[image], labels=[label])
 
     def test(self, blob):
-        (image, label) = tf.train.batch_join(
-            blob.as_tuple_list(),
-            batch_size=self.batch_size / self.num_test_crops,
-            capacity=self.batch_size / self.num_test_crops)
+        (self.test_batch_size, self.test_total_size, self.test_assign) = self.make_size(self.batch_size / self.num_test_crops)
+
+        (image, label) = tf.tuple(
+            tf.train.batch_join(
+                blob.as_tuple_list(),
+                batch_size=self.test_batch_size,
+                capacity=self.test_capacity),
+            control_inputs=[self.test_assign])
 
         shape = image_util.get_shape(image)
-        image = tf.reshape(image, (self.batch_size,) + shape[2:])
-        return Blob(image=image, label=label)
+        image = tf.reshape(image, (-1,) + shape[2:])
+        return Blob(images=[image], labels=[label])
 
 
 class Net(object):
@@ -293,7 +326,7 @@ class Net(object):
     WEIGHT_DECAY = 0.0
 
     @staticmethod
-    def placeholder(name, shape=None, dtype=tf.float32):
+    def placeholder(name, shape=(), dtype=tf.float32):
         return tf.placeholder(
             name=name,
             shape=shape,
@@ -345,7 +378,7 @@ class Net(object):
         self.is_train = is_train
         self.is_show = is_show
 
-        self.phase = Net.placeholder('phase', shape=())
+        self.phase = tf.placeholder(name='phase', shape=(), dtype=tf.int32)
         self.class_names = Net.get_const_variable(Meta.CLASS_NAMES, 'class_names', shape=(len(Meta.CLASS_NAMES),), dtype=tf.string)
         self.global_step = Net.get_const_variable(0, 'global_step')
         self.checkpoint = tf.train.get_checkpoint_state(Meta.WORKING_DIR)
@@ -624,8 +657,9 @@ class ResNet(Net):
         shape = image_util.get_shape(value)
 
         def test_segment_mean(value):
-            batch_size = shape[0] / self.num_test_crops
-            value = tf.segment_mean(value, np.repeat(np.arange(batch_size), self.num_test_crops))
+            batch_size = tf.shape(value)[0] / self.num_test_crops
+            segment_ids = tf.reshape(tf.tile(tf.reshape(tf.range(batch_size), (-1, 1)), (1, self.num_test_crops)), (-1,))
+            value = tf.segment_mean(value, segment_ids)
             return value
 
         value = self.case([
@@ -691,13 +725,15 @@ class ResNet50(ResNet):
         self.finalize()
 
     def train(self, iteration, feed_dict=dict()):
+        feed_dict[self.phase] = Net.Phase.TRAIN.value
+
         train_dict = dict(train=self.train_op)
         show_dict = self.show_dict[Net.Phase.TRAIN]
         summary_dict = dict(summary=self.summary[Net.Phase.TRAIN])
 
         self.model.train(
             iteration=iteration,
-            feed_dict=util.merge_dicts(feed_dict, {self.phase: Net.Phase.TRAIN.value}),
+            feed_dict=feed_dict,
             callbacks=[
                 dict(fetch=util.merge_dicts(train_dict, show_dict, summary_dict)),
                 dict(fetch=show_dict,
@@ -711,12 +747,14 @@ class ResNet50(ResNet):
                      func=lambda **kwargs: self.model.save(saver=self.saver, saver_kwargs=dict(save_path=os.path.join(Meta.WORKING_DIR, 'model')), **kwargs))])
 
     def test(self, iteration=1, feed_dict=dict()):
+        feed_dict[self.phase] = Net.Phase.TEST.value
+
         show_dict = self.show_dict[Net.Phase.TEST]
         summary_dict = dict(summary=self.summary[Net.Phase.TEST])
 
         self.model.test(
             iteration=iteration,
-            feed_dict=util.merge_dicts(feed_dict, {self.phase: Net.Phase.TEST.value}),
+            feed_dict=feed_dict,
             callbacks=[
                 dict(fetch=util.merge_dicts(show_dict, summary_dict)),
                 dict(fetch=show_dict,
@@ -724,7 +762,7 @@ class ResNet50(ResNet):
                 dict(fetch=summary_dict,
                      func=lambda **kwargs: self.model.summary(summary_writer=self.summary_writer, **kwargs))])
 
-    def online(self, fetch, feed_dict=dict()):
+    def online(self, feed_dict=dict(), fetch=dict()):
         feed_dict[self.phase] = Net.Phase.TEST.value
 
         self.model.test(
