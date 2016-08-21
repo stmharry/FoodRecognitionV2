@@ -1,3 +1,5 @@
+# TODO: second request
+
 from __future__ import print_function
 
 import collections
@@ -27,38 +29,25 @@ def url_to_image(url):
     return image
 
 
-def file_to_query(filename):
-    return Query(np.loadtxt(filename, dtype=np.str))
-
-
 class Query(object):
     def __init__(self, urls):
         self.urls = urls
         num_urls = len(urls)
 
-        fetch_val = net.online(
-            feed_dict={
-                batch.test_total_size: num_urls,
-                consumer.total_size: num_urls},
-            fetch={
-                'batch_assign': batch.test_assign,
-                'consumer_assign': consumer.assign})
-
+        net.online(**batch.kwargs(total_size=num_urls, phase=Net.Phase.TEST))
+        net.online(**consumer.kwargs(total_size=num_urls))
         net.start(default_phase=Net.Phase.TEST)
 
         with Timer('ResNet50 running prediction on %d images... ' % num_urls):
-            for (num_url, url) in enumerate(urls):
-                print('\033[2K\r%d / %d' % (num_url + 1, num_urls), end='')
+            for url in urls:
+                print('.', end='')
                 sys.stdout.flush()
 
-                image = url_to_image(url)
-                fetch_val = net.online(
-                    feed_dict={producer.placeholder: image},
-                    fetch={'enqueue': producer.enqueue})
+                net.online(**producer.kwargs(image=url_to_image(url)))
             print('')
 
-            fetch_val = net.online(fetch={'probs': blob.values[0]})
-            self.probs = fetch_val['probs']
+            fetch_val = net.online(**blob.kwargs())
+            self.probs = fetch_val[blob.values[0].name]
 
     def to_json(self):
         json_dict = collections.OrderedDict()
@@ -80,5 +69,6 @@ if __name__ == '__main__':
     with Timer('Building network...'):
         producer.blob().func(preprocess.test).func(batch.test).func(net.build)
         blob = postprocess.blob(net.prob).func(consumer.build)
-    query = file_to_query('query.txt')
+
+    query = Query(np.loadtxt('query.txt', dtype=np.str))
     print(query.to_json())

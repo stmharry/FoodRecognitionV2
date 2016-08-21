@@ -59,6 +59,10 @@ class Meta(object):
 
 
 class Blob(object):
+    class Content(enum.Enum):
+        IMAGE_LABEL = 0
+        VALUE = 1
+
     def __init__(self, **kwargs):
         assert ('images' in kwargs) + ('values' in kwargs) == 1, 'Too many arguments!'
 
@@ -69,10 +73,12 @@ class Blob(object):
             else:
                 labels = [tf.constant(-1, dtype=tf.int64) for _ in xrange(len(images))]
 
+            self.content = Blob.Content.IMAGE_LABEL
             self.images = images
             self.labels = labels
         elif 'values' in kwargs:
             values = prob_list(kwargs['values'])
+            self.content = Blob.Content.VALUE
             self.values = values
 
     def as_tuple_list(self):
@@ -80,6 +86,16 @@ class Blob(object):
 
     def func(self, f):
         return f(self)
+
+    def kwargs(self):
+        if self.content == Blob.Content.IMAGE_LABEL:
+            values = self.images + self.labels
+        elif self.content == Blob.Content.VALUE:
+            values = self.values
+
+        return dict(
+            feed_dict=dict(),
+            fetch={value.name: value for value in values})
 
 
 class BaseProducer(object):
@@ -100,6 +116,11 @@ class SimpleProducer(BaseProducer):
             dtype=dtype)
         return Blob(images=self.placeholder)
 
+    def get_kwargs(self, image):
+        return dict(
+            feed_dict={self.placeholder: image},
+            fetch=dict())
+
 
 class QueueProducer(BaseProducer):
     CAPACITY = 1024
@@ -115,6 +136,11 @@ class QueueProducer(BaseProducer):
         (self.queue, self.enqueue) = self.get_queue_enqueue(values=[self.placeholder], dtype=dtype, shape=shape, auto=False)
         image = self.queue.dequeue()
         return Blob(images=image)
+
+    def kwargs(self, image):
+        return dict(
+            feed_dict={self.placeholder: image},
+            fetch=dict(queue_producer_enqueue=self.enqueue))
 
 
 class FileProducer(BaseProducer):
@@ -209,6 +235,9 @@ class FileProducer(BaseProducer):
             subsample_divisible=True,
             check=check,
             shuffle=False)
+
+    def kwargs(self):
+        return dict()
 
 
 class Preprocess(object):
@@ -331,6 +360,16 @@ class Batch(object):
         shape = image_util.get_shape(image)
         image = tf.reshape(image, (-1,) + shape[2:])
         return Blob(images=image, labels=label)
+
+    def kwargs(self, total_size, phase):
+        if phase == Net.Phase.TRAIN:
+            return dict(
+                feed_dict={self.train_total_size: total_size},
+                fetch=dict(batch_train_assign=self.train_assign))
+        elif phase == Net.Phase.TEST:
+            return dict(
+                feed_dict={self.test_total_size: total_size},
+                fetch=dict(batch_test_assign=self.test_assign))
 
 
 class Net(object):
@@ -860,6 +899,11 @@ class Consumer(object):
             value = tf.reshape(value, (-1,) + shape[2:])
             values_.append(value)
         return Blob(values=values_)
+
+    def kwargs(self, total_size):
+        return dict(
+            feed_dict={self.total_size: total_size},
+            fetch=dict(consumer_assign=self.assign))
 
 
 class Timer(object):
