@@ -9,8 +9,25 @@ import sys
 import tensorflow as tf
 import time
 
+sys.path.append('./DeepBox')
 from deepbox import util, image_util
 from deepbox.model import Model
+
+
+def DEBUG(value, name=None, func=None):
+    if name is None:
+        name = value.name
+    show = value
+    if func is not None:
+        show = func(show)
+        name = '%s(%s)' % (func.__name__, name)
+    return tf.Print(value, [show], '%s: ' % name)
+
+def prob_list(x):
+    if not isinstance(x, list):
+        return [x]
+    else:
+        return x
 
 
 class Meta(object):
@@ -45,16 +62,16 @@ class Blob(object):
         assert ('images' in kwargs) + ('values' in kwargs) == 1, 'Too many arguments!'
 
         if 'images' in kwargs:
-            images = kwargs['images']
+            images = prob_list(kwargs['images'])
             if 'labels' in kwargs:
-                labels = kwargs['labels']
+                labels = prob_list(kwargs['labels'])
             else:
                 labels = [tf.constant(-1, dtype=tf.int64) for _ in xrange(len(images))]
 
             self.images = images
             self.labels = labels
         elif 'values' in kwargs:
-            values = kwargs['values']
+            values = prob_list(kwargs['values'])
             self.values = values
 
     def as_tuple_list(self):
@@ -80,7 +97,7 @@ class SimpleProducer(BaseProducer):
             name=name,
             shape=shape,
             dtype=dtype)
-        return Blob(images=[self.placeholder])
+        return Blob(images=self.placeholder)
 
 
 class QueueProducer(BaseProducer):
@@ -95,7 +112,8 @@ class QueueProducer(BaseProducer):
             shape=shape,
             dtype=dtype)
         (self.queue, self.enqueue) = self.get_queue_enqueue(values=[self.placeholder], dtype=dtype, shape=shape, auto=False)
-        return Blob(images=[self.queue.dequeue()])
+        image = self.queue.dequeue()
+        return Blob(images=image)
 
 
 class FileProducer(BaseProducer):
@@ -272,17 +290,20 @@ class Batch(object):
         self.min_after_dequeue = min_after_dequeue
 
     def make_size(self, batch_size):
-        base_batch_size = tf.constant(batch_size, dtype=tf.int32)
+        batch_size = tf.constant(batch_size, dtype=tf.int32)
         zero = tf.constant(0, dtype=tf.int32)
 
-        real_total_size = tf.Variable(-1, trainable=False, dtype=tf.int32)
-        (real_batch_size, adjust_batch_size) = tf.cond(
-            tf.equal(real_total_size, -1),
-            lambda: (base_batch_size, zero),
-            lambda: (tf.minimum(real_total_size, base_batch_size),) * 2)
-        real_total_size_ = tf.placeholder_with_default(real_total_size - adjust_batch_size, shape=())
-        assign = real_total_size.assign(real_total_size_)
-        return (real_batch_size, real_total_size_, assign)
+        total_size = tf.Variable(-1, trainable=False, dtype=tf.int32)
+        (batch_size_, dec_batch_size) = tf.cond(
+            tf.equal(total_size, -1),
+            lambda: (batch_size, zero),
+            lambda: (tf.minimum(total_size, batch_size),) * 2)
+
+        next_total_size = total_size - dec_batch_size
+        total_size_ = tf.placeholder_with_default(next_total_size, shape=())
+        assign = total_size.assign(total_size_)
+
+        return (batch_size_, total_size_, assign)
 
     def train(self, blob):
         (self.train_batch_size, self.train_total_size, self.train_assign) = self.make_size(self.batch_size)
@@ -294,7 +315,7 @@ class Batch(object):
                 capacity=self.train_capacity,
                 min_after_dequeue=self.min_after_dequeue),
             control_inputs=[self.train_assign])
-        return Blob(images=[image], labels=[label])
+        return Blob(images=image, labels=label)
 
     def test(self, blob):
         (self.test_batch_size, self.test_total_size, self.test_assign) = self.make_size(self.batch_size / self.num_test_crops)
@@ -308,13 +329,14 @@ class Batch(object):
 
         shape = image_util.get_shape(image)
         image = tf.reshape(image, (-1,) + shape[2:])
-        return Blob(images=[image], labels=[label])
+        return Blob(images=image, labels=label)
 
 
 class Net(object):
     class Phase(enum.Enum):
-        TRAIN = 0
-        TEST = 1
+        NONE = 0
+        TRAIN = 1
+        TEST = 2
 
     NET_VARIABLES = 'net_variables'
     NET_COLLECTIONS = [tf.GraphKeys.VARIABLES, NET_VARIABLES]
@@ -326,14 +348,20 @@ class Net(object):
     WEIGHT_DECAY = 0.0
 
     @staticmethod
-    def placeholder(name, shape=(), dtype=tf.float32):
-        return tf.placeholder(
-            name=name,
-            shape=shape,
-            dtype=dtype)
+    def placeholder(name=None, shape=(), dtype=tf.float32, default=None):
+        if default is None:
+            return tf.placeholder(
+                name=name,
+                shape=shape,
+                dtype=dtype)
+        else:
+            return tf.placeholder_with_default(
+                input=default,
+                name=name,
+                shape=shape)
 
     @staticmethod
-    def get_const_variable(value, name, shape=(), dtype=tf.float32, trainable=False, collections=NET_COLLECTIONS):
+    def get_const_variable(value, name, shape=(), dtype=tf.float32, trainable=False, collections=None):
         return tf.get_variable(
             name,
             shape=shape,
@@ -341,6 +369,13 @@ class Net(object):
             initializer=tf.constant_initializer(value),
             trainable=trainable,
             collections=collections)
+
+    @staticmethod
+    def get_assignable_variable(value, name, shape=(), dtype=tf.float32, collections=None):
+        placeholder = Net.placeholder(name, shape=shape, dtype=dtype)
+        var = Net.get_const_variable(value, name, shape=shape, dtype=dtype, trainable=False, collections=collections)
+        assign = var.assign(placeholder)
+        return (placeholder, var, assign)
 
     @staticmethod
     def expand(size):
@@ -378,8 +413,8 @@ class Net(object):
         self.is_train = is_train
         self.is_show = is_show
 
-        self.phase = tf.placeholder(name='phase', shape=(), dtype=tf.int32)
-        self.class_names = Net.get_const_variable(Meta.CLASS_NAMES, 'class_names', shape=(len(Meta.CLASS_NAMES),), dtype=tf.string)
+        (self.phase, self.phase_, self.phase_assign) = Net.get_assignable_variable(Net.Phase.NONE.value, 'phase', dtype=tf.int32)
+        self.class_names = Net.get_const_variable(Meta.CLASS_NAMES, 'class_names', shape=(len(Meta.CLASS_NAMES),), dtype=tf.string, collections=Net.NET_VARIABLES)
         self.global_step = Net.get_const_variable(0, 'global_step')
         self.checkpoint = tf.train.get_checkpoint_state(Meta.WORKING_DIR)
 
@@ -391,11 +426,13 @@ class Net(object):
                 decay_rate=learning_rate_decay_rate,
                 staircase=True)
 
-    def case(self, phase_fn_pairs, shape=None):
-        pred_fn_pairs = [(tf.equal(self.phase, phase_.value), fn) for (phase_, fn) in phase_fn_pairs]
-        value = tf.case(pred_fn_pairs, default=pred_fn_pairs[0][1])
-        value.set_shape(shape)
-        return value
+    def case(self, phase_fn_pairs, shapes=None):
+        pred_fn_pairs = [(tf.equal(self.phase_, phase_.value), fn) for (phase_, fn) in phase_fn_pairs]
+        values = tf.case(pred_fn_pairs, default=pred_fn_pairs[0][1])
+        if shapes is not None:
+            for (value, shape) in zip(values, shapes):
+                value.set_shape(shape)
+        return values
 
     def make_stat(self):
         assert hasattr(self, 'prob'), 'net has no attribute "prob"!'
@@ -439,14 +476,14 @@ class Net(object):
                 '%s_%s_%s' % (phase.name, attr, postfix): func(getattr(self, attr))
                 for (postfix, func) in postfix_funcs[phase].iteritems()
                 for attr in ['loss', 'acc']}
-            for phase in Net.Phase}
+            for phase in [Net.Phase.TRAIN, Net.Phase.TEST]}
 
         self.show_dict[Net.Phase.TRAIN].update({
             attr: getattr(self, attr) for attr in ['learning_rate']})
 
         self.summary = {
             phase: tf.merge_summary([tf.scalar_summary(name, attr) for (name, attr) in self.show_dict[phase].iteritems()])
-            for phase in Net.Phase}
+            for phase in [Net.Phase.TRAIN, Net.Phase.TEST]}
 
     def finalize(self):
         self.sess = tf.InteractiveSession(config=tf.ConfigProto(allow_soft_placement=True))
@@ -457,10 +494,12 @@ class Net(object):
         if self.checkpoint:
             print('Model restored from %s' % self.checkpoint.model_checkpoint_path)
             self.saver.restore(tf.get_default_session(), self.checkpoint.model_checkpoint_path)
-
-        tf.train.start_queue_runners()
-        print('Filling queues with images...')
         self.model = Model(self.global_step)
+
+    def start(self, phase=Phase.NONE):
+        self.sess.run(self.phase_assign, feed_dict={self.phase: phase.value})
+        tf.train.start_queue_runners()
+        print('Filling queues...')
 
 
 class ResNet(Net):
@@ -653,18 +692,18 @@ class ResNet(Net):
         value = value / tf.reduce_sum(value, reduction_indices=dim, keep_dims=True)
         return value
 
+    def test_segment_mean(self, value):
+        batch_size = tf.shape(value)[0] / self.num_test_crops
+        segment_ids = tf.reshape(tf.tile(tf.reshape(tf.range(batch_size), (-1, 1)), (1, self.num_test_crops)), (-1,))
+        value = tf.segment_mean(value, segment_ids)
+        return value
+
     def segment_mean(self, value):
         shape = image_util.get_shape(value)
 
-        def test_segment_mean(value):
-            batch_size = tf.shape(value)[0] / self.num_test_crops
-            segment_ids = tf.reshape(tf.tile(tf.reshape(tf.range(batch_size), (-1, 1)), (1, self.num_test_crops)), (-1,))
-            value = tf.segment_mean(value, segment_ids)
-            return value
-
         value = self.case([
             (Net.Phase.TRAIN, lambda: value),
-            (Net.Phase.TEST, lambda: test_segment_mean(value))])
+            (Net.Phase.TEST, lambda: self.test_segment_mean(value))])
 
         value.set_shape((None,) + shape[1:])
         return value
@@ -724,7 +763,7 @@ class ResNet50(ResNet):
 
         self.finalize()
 
-    def train(self, iteration, feed_dict=dict()):
+    def train(self, iteration=0, feed_dict=dict()):
         feed_dict[self.phase] = Net.Phase.TRAIN.value
 
         train_dict = dict(train=self.train_op)
@@ -772,3 +811,67 @@ class ResNet50(ResNet):
                 dict(fetch=fetch)])
 
         return self.model.output_values
+
+
+class Postprocess(object):
+    def __init__(self):
+        pass
+
+    def blob(self, values):
+        return Blob(values=values)
+
+
+class Consumer(object):
+    BATCH_SIZE = 64
+    NUM_TEST_CROPS = 4
+    CAPACITY = 64
+
+    def __init__(self,
+                 batch_size=BATCH_SIZE,
+                 num_test_crops=NUM_TEST_CROPS,
+                 capacity=CAPACITY):
+
+        self.batch_size = batch_size
+        self.num_test_crops = num_test_crops
+        self.capacity = capacity
+
+    def build(self, blob):
+        values = blob.values
+
+        test_batch_size = self.batch_size / self.num_test_crops
+        self.queue = tf.PaddingFIFOQueue(
+            self.capacity,
+            shapes=[(None,) + image_util.get_size(value) for value in values],
+            dtypes=[value.dtype for value in values])
+        enqueue = self.queue.enqueue(values)
+        queue_runner = tf.train.QueueRunner(self.queue, [enqueue])
+        tf.train.add_queue_runner(queue_runner)
+
+        total_size = tf.Variable(-1, trainable=False, dtype=tf.int32)
+        dequeue_size = (total_size - 1) / test_batch_size + 1
+        self.total_size = tf.placeholder_with_default(self.capacity * test_batch_size, shape=())
+        self.assign = total_size.assign(self.total_size)
+
+        values = prob_list(self.queue.dequeue_many(dequeue_size))
+        values_ = list()
+        for value in values:
+            shape = image_util.get_shape(value)
+            value = tf.reshape(value, (-1,) + shape[2:])
+            values_.append(value)
+        return Blob(values=values_)
+
+
+class Timer(object):
+    def __init__(self, message):
+        self.message = message
+        self.start = time.time()
+
+    def __enter__(self):
+        print(self.message)
+
+    def __exit__(self, type, msg, traceback):
+        if type:
+            print(msg)
+        else:
+            print('Time: %.3f s' % (time.time() - self.start))
+        return False

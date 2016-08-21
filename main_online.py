@@ -6,23 +6,29 @@ import json
 import numpy as np
 import PIL.Image
 import sys
-import time
 import urllib
 
-from ResNet import Meta, QueueProducer, Preprocess, Batch, ResNet50
+from ResNet import Meta, QueueProducer, Preprocess, Batch, Net, ResNet50, Postprocess, Consumer, Timer
 
 json.encoder.FLOAT_REPR = '{:.4f}'.format
 
 WORKING_DIR = '/mnt/data/dish-clean-save/2016-08-16-191753/'
 TOP_K = 6
 
-Meta.test(working_dir=WORKING_DIR)
-producer = QueueProducer()
-preprocess = Preprocess()
-batch = Batch()
-net = ResNet50()
 
-producer.blob().func(preprocess.test).func(batch.test).func(net.build)
+def url_to_image(url):
+    if url.startswith('http'):
+        pipe = urllib.urlopen(url)
+        stringIO = cStringIO.StringIO(pipe.read())
+        pil = PIL.Image.open(stringIO)
+    else:
+        pil = PIL.Image.open(url)
+    image = np.array(pil.getdata(), dtype=np.uint8).reshape((pil.height, pil.width, -1))
+    return image
+
+
+def file_to_query(filename):
+    return Query(np.loadtxt(filename, dtype=np.str))
 
 
 class Query(object):
@@ -30,44 +36,29 @@ class Query(object):
         self.urls = urls
         num_urls = len(urls)
 
-        _ = net.online(
-            feed_dict={batch.test_total_size: num_urls},
-            fetch={'assign': batch.test_assign})
+        fetch_val = net.online(
+            feed_dict={
+                batch.test_total_size: num_urls,
+                consumer.total_size: num_urls},
+            fetch={
+                'batch_assign': batch.test_assign,
+                'consumer_assign': consumer.assign})
 
-        print('Retrieving and queueing images... ')
-        start = time.time()
-        for (num_url, url) in enumerate(urls):
-            print('\033[2K\r%d / %d' % (num_url + 1, num_urls), end='')
-            sys.stdout.flush()
+        net.start(phase=Net.Phase.TEST)
 
-            if url.startswith('http'):
-                pipe = urllib.urlopen(url)
-                stringIO = cStringIO.StringIO(pipe.read())
-                pil = PIL.Image.open(stringIO)
-            else:
-                pil = PIL.Image.open(url)
-            image = np.array(pil.getdata(), dtype=np.uint8).reshape((pil.height, pil.width, -1))
+        with Timer('ResNet50 running prediction on %d images... ' % num_urls):
+            for (num_url, url) in enumerate(urls):
+                print('\033[2K\r%d / %d' % (num_url + 1, num_urls), end='')
+                sys.stdout.flush()
 
-            fetch_val = net.online(
-                feed_dict={producer.placeholder: image},
-                fetch={'enqueue': producer.enqueue})
-        print('')
-        print('Time: %.3f s' % (time.time() - start))
+                image = url_to_image(url)
+                fetch_val = net.online(
+                    feed_dict={producer.placeholder: image},
+                    fetch={'enqueue': producer.enqueue})
+            print('')
 
-        print('Processing %d images... ' % num_urls, end='')
-        start = time.time()
-        total_size = num_urls
-        probs = list()
-        while total_size > 0:
-            fetch_val = net.online(
-                fetch={
-                    'prob': net.prob,
-                    'total_size': batch.test_total_size})
-            probs.append(fetch_val['prob'])
-            total_size = fetch_val['total_size']
-        print('time: %.3f s' % (time.time() - start))
-
-        self.probs = np.concatenate(probs, axis=0)
+            fetch_val = net.online(fetch={'probs': blob.values[0]})
+            self.probs = fetch_val['probs']
 
     def to_json(self):
         json_dict = collections.OrderedDict()
@@ -77,9 +68,17 @@ class Query(object):
         return json.dumps(json_dict, indent=4)
 
 
-def query_from_file(filename):
-    return Query(open(filename, 'r').read().rstrip('\n').split('\n'))
-
 if __name__ == '__main__':
-    query = query_from_file('query.txt')
+    Meta.test(working_dir=WORKING_DIR)
+    producer = QueueProducer()
+    preprocess = Preprocess()
+    batch = Batch()
+    net = ResNet50()
+    postprocess = Postprocess()
+    consumer = Consumer()
+
+    with Timer('Building network...'):
+        producer.blob().func(preprocess.test).func(batch.test).func(net.build)
+        blob = postprocess.blob(net.prob).func(consumer.build)
+    query = file_to_query('query.txt')
     print(query.to_json())
