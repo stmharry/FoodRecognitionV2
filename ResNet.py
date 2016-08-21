@@ -23,6 +23,7 @@ def DEBUG(value, name=None, func=None):
         name = '%s(%s)' % (func.__name__, name)
     return tf.Print(value, [show], '%s: ' % name)
 
+
 def prob_list(x):
     if not isinstance(x, list):
         return [x]
@@ -496,8 +497,8 @@ class Net(object):
             self.saver.restore(tf.get_default_session(), self.checkpoint.model_checkpoint_path)
         self.model = Model(self.global_step)
 
-    def start(self, phase=Phase.NONE):
-        self.sess.run(self.phase_assign, feed_dict={self.phase: phase.value})
+    def start(self, default_phase=Phase.NONE):
+        self.sess.run(self.phase_assign, feed_dict={self.phase: default_phase.value})
         tf.train.start_queue_runners()
         print('Filling queues...')
 

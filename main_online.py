@@ -44,7 +44,7 @@ class Query(object):
                 'batch_assign': batch.test_assign,
                 'consumer_assign': consumer.assign})
 
-        net.start(phase=Net.Phase.TEST)
+        net.start(default_phase=Net.Phase.TEST)
 
         with Timer('ResNet50 running prediction on %d images... ' % num_urls):
             for (num_url, url) in enumerate(urls):
