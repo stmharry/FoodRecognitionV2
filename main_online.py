@@ -1,17 +1,17 @@
+#!/usr/bin/env python
+
 from __future__ import print_function
 
+import BaseHTTPServer
 import collections
 import cStringIO
 import json
 import numpy as np
 import PIL.Image
-import sys
 import urllib
+import urlparse
 
-# from ResNet import Meta, QueueProducer, Preprocess, Batch, Net, ResNet50, Postprocess, Consumer, Timer
 from ResNet import Meta, QueueProducer, Preprocess, Batch, Net, ResNet50, Postprocess, Timer
-
-json.encoder.FLOAT_REPR = '{:.4f}'.format
 
 WORKING_DIR = '/mnt/data/dish-clean-save/2016-08-16-191753/'
 TOP_K = 6
@@ -28,20 +28,43 @@ def url_to_image(url):
     return image
 
 
+class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+    def do_GET(self):
+        requestString = urlparse.parse_qs(self.path.lstrip('/?'))
+        url = requestString['url'][0]
+
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+
+        request = Request([url])
+        request.build()
+        json = request.to_json()
+
+        self.wfile.write('<img src="%s"></img>' % url)
+        self.wfile.write('<p style="white-space: pre;">%s</p>' % json.replace('\n', '<br/>'))
+        self.wfile.close()
+
+    def do_POST(self):
+        self.send_response(200)
+
+    do_PUT = do_POST
+    do_DELETE = do_GET
+
+
 class Request(object):
     def __init__(self, urls):
+        json.encoder.FLOAT_REPR = '{:.4f}'.format
+
         self.urls = urls
-        num_urls = len(urls)
+        self.num_urls = len(urls)
 
-        net.online(**batch.kwargs(total_size=num_urls, phase=Net.Phase.TEST))
+    def build(self):
+        net.online(**batch.kwargs(total_size=self.num_urls, phase=Net.Phase.TEST))
 
-        with Timer('ResNet50 running prediction on %d images... ' % num_urls):
-            for url in urls:
-                print('.', end='')
-                sys.stdout.flush()
-
+        with Timer('ResNet50 running prediction on %d images... ' % self.num_urls):
+            for url in self.urls:
                 net.online(**producer.kwargs(image=url_to_image(url)))
-            print('')
 
             probs = list()
             while True:
@@ -71,9 +94,8 @@ if __name__ == '__main__':
 
     with Timer('Building network...'):
         producer.blob().func(preprocess.test).func(batch.test).func(net.build)
-        # blob = postprocess.blob(net.prob).func(consumer.build)
         blob = postprocess.blob(net.prob)
         net.start(default_phase=Net.Phase.TEST)
 
-    request = Request(np.loadtxt('request.txt', dtype=np.str))
-    print(request.to_json())
+    server = BaseHTTPServer.HTTPServer(('0.0.0.0', 6006), RequestHandler)
+    server.serve_forever()

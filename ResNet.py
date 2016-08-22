@@ -13,7 +13,8 @@ sys.path.append('./DeepBox')
 from deepbox import util, image_util
 from deepbox.model import Model
 
-IS_DEBUG = False
+IS_DEBUG = True
+
 
 def DEBUG(value, name=None, func=None):
     if not IS_DEBUG:
@@ -333,11 +334,13 @@ class Batch(object):
             tf.equal(total_size, -1),
             lambda: (batch_size, zero),
             lambda: (tf.minimum(total_size, batch_size),) * 2)
+        batch_size_ = DEBUG(batch_size_, 'Batch.batch_size_')
 
         next_total_size = total_size - dec_batch_size
+        next_total_size = DEBUG(next_total_size, 'Batch.next_total_size')
+
         total_size_ = tf.placeholder_with_default(next_total_size, shape=())
         assign = total_size.assign(total_size_)
-
         assign = DEBUG(assign, 'Batch.assign')
 
         return (batch_size_, total_size_, assign)
@@ -366,8 +369,6 @@ class Batch(object):
 
         shape = image_util.get_shape(image)
         image = tf.reshape(image, (-1,) + shape[2:])
-
-        image = tf.Print(image, [self.test_batch_size], 'Batch.test_batch_size: ')
 
         return Blob(images=image, labels=label)
 
@@ -887,7 +888,7 @@ class Consumer(object):
 
     def build(self, blob):
         values = blob.values
-        values = [DEBUG(value, name='Consumer.build_value', func=tf.shape) for value in values]
+        values = [DEBUG(value, name='Consumer.value(queued)', func=tf.shape) for value in values]
 
         test_batch_size = self.batch_size / self.num_test_crops
         self.queue = tf.PaddingFIFOQueue(
@@ -904,7 +905,7 @@ class Consumer(object):
         self.assign = total_size.assign(self.total_size)
 
         self.assign = DEBUG(self.assign, name='Consumer.assign')
-        dequeue_size = DEBUG(dequeue_size, name='Consumer.dequeue_size')
+        dequeue_size = tf.Print(dequeue_size, [dequeue_size, self.queue.size()], 'Consumer.dequeue_size, Consumer.queue.size: ')
 
         values = prob_list(self.queue.dequeue_many(dequeue_size))
         values_ = list()
@@ -912,7 +913,6 @@ class Consumer(object):
             shape = image_util.get_shape(value)
             value = tf.reshape(value, (-1,) + shape[2:])
             values_.append(value)
-        values = [DEBUG(value, name='Consumer.blob_value', func=tf.shape) for value in values_]
         return Blob(values=values_)
 
     def kwargs(self, total_size):
