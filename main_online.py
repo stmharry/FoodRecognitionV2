@@ -1,5 +1,3 @@
-# TODO: second request
-
 from __future__ import print_function
 
 import collections
@@ -10,7 +8,8 @@ import PIL.Image
 import sys
 import urllib
 
-from ResNet import Meta, QueueProducer, Preprocess, Batch, Net, ResNet50, Postprocess, Consumer, Timer
+# from ResNet import Meta, QueueProducer, Preprocess, Batch, Net, ResNet50, Postprocess, Consumer, Timer
+from ResNet import Meta, QueueProducer, Preprocess, Batch, Net, ResNet50, Postprocess, Timer
 
 json.encoder.FLOAT_REPR = '{:.4f}'.format
 
@@ -29,14 +28,12 @@ def url_to_image(url):
     return image
 
 
-class Query(object):
+class Request(object):
     def __init__(self, urls):
         self.urls = urls
         num_urls = len(urls)
 
         net.online(**batch.kwargs(total_size=num_urls, phase=Net.Phase.TEST))
-        net.online(**consumer.kwargs(total_size=num_urls))
-        net.start(default_phase=Net.Phase.TEST)
 
         with Timer('ResNet50 running prediction on %d images... ' % num_urls):
             for url in urls:
@@ -46,8 +43,15 @@ class Query(object):
                 net.online(**producer.kwargs(image=url_to_image(url)))
             print('')
 
-            fetch_val = net.online(**blob.kwargs())
-            self.probs = fetch_val[blob.values[0].name]
+            probs = list()
+            while True:
+                fetch_val = net.online(**blob.kwargs())
+                prob = fetch_val[net.prob.name]
+                if prob.size == 0:
+                    break
+                probs.append(prob)
+
+            self.probs = np.concatenate(probs, axis=0)
 
     def to_json(self):
         json_dict = collections.OrderedDict()
@@ -64,11 +68,12 @@ if __name__ == '__main__':
     batch = Batch()
     net = ResNet50()
     postprocess = Postprocess()
-    consumer = Consumer()
 
     with Timer('Building network...'):
         producer.blob().func(preprocess.test).func(batch.test).func(net.build)
-        blob = postprocess.blob(net.prob).func(consumer.build)
+        # blob = postprocess.blob(net.prob).func(consumer.build)
+        blob = postprocess.blob(net.prob)
+        net.start(default_phase=Net.Phase.TEST)
 
-    query = Query(np.loadtxt('query.txt', dtype=np.str))
-    print(query.to_json())
+    request = Request(np.loadtxt('request.txt', dtype=np.str))
+    print(request.to_json())
