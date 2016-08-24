@@ -9,7 +9,7 @@ import sys
 import tensorflow as tf
 import time
 
-sys.path.append('./DeepBox')
+sys.path.insert('./DeepBox')
 from deepbox import util, image_util
 from deepbox.model import Model
 

@@ -41,8 +41,8 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         request.build()
         json = request.to_json()
 
-        self.wfile.write('<img src="%s"></img>' % url)
-        self.wfile.write('<p style="white-space: pre;">%s</p>' % json.replace('\n', '<br/>'))
+        self.wfile.write('<img src="%s" width="368"></img>' % url)
+        self.wfile.write('<p style="white-space: pre; font-family: monospace;">%s</p>' % json.replace('\n', '<br/>'))
         self.wfile.close()
 
     def do_POST(self):
