@@ -5,15 +5,22 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+import collections
 import skimage.io
+import sys
+
+# RESNET_ROOT = '/var/django/ResidualNetworkV2'
+RESNET_ROOT = '/home/harry/Repository/FoodRecognitionV2'
+WORKING_DIR = '/mnt/data/dish-clean-save/2016-08-16-191753'
+TOP_K = 6
+
+if RESNET_ROOT not in sys.path:
+    sys.path.append(RESNET_ROOT)
 
 from ResNet import Meta, QueueProducer, Preprocess, Batch, Net, ResNet50, Postprocess, Timer
 
-DJANGO_ROOT = '/vol/django_server'
-WORKING_DIR = '/mnt/data/dish-clean-save/2016-08-16-191753/'
 
-
-class ResNetWrapper(object):
+class NetWrapper(object):
     def __init__(self):
         Meta.test(working_dir=WORKING_DIR)
         self.producer = QueueProducer()
@@ -27,31 +34,33 @@ class ResNetWrapper(object):
             self.blob = self.postprocess.blob(self.net.prob)
             self.net.start(default_phase=Net.Phase.TEST)
 
-    def get(self, urls):
+    def get_results(self, urls):
         num_urls = len(urls)
+        self.net.online(**self.batch.kwargs(total_size=num_urls, phase=Net.Phase.TEST))
+
         with Timer('ResNet50 running prediction on %d images... ' % num_urls):
             for url in urls:
                 self.net.online(**self.producer.kwargs(image=skimage.io.imread(url)))
 
-            prob_dicts = list()
+            results = list()
             while True:
                 fetch = self.net.online(**self.blob.kwargs())
                 probs = fetch[self.net.prob.name]
                 for prob in probs:
-                    prob_dicts.append(dict(zip(Meta.CLASS_NAMES, prob)))
+                    indices = sorted(xrange(len(Meta.CLASS_NAMES)), key=prob.__getitem__)[:-(TOP_K + 1):-1]
+                    classes = collections.OrderedDict([(Meta.CLASS_NAMES[index], round(prob[index], 4)) for index in indices])
+                    results.append(dict(status='ok', classes=classes))
                 if probs.size == 0:
                     break
 
-        return dict(status='ok', classes=prob_dicts)
+        return results
 
 
 class ClassifyService(APIView):
-    RESNET_WRAPPER = ResNetWrapper()
+    NET_WRAPPER = NetWrapper()
 
     @parser_classes((JSONParser,))
     @renderer_classes((JSONRenderer,))
     def post(self, request, format=None):
-        images = request.data['images']
-        content = dict(results=ClassifyService.RESNET_WRAPPER.get(images))
-
+        content = dict(results=ClassifyService.NET_WRAPPER.get_results(request.data['url']))
         return Response(content)

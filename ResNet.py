@@ -9,11 +9,12 @@ import sys
 import tensorflow as tf
 import time
 
-sys.path.insert('./DeepBox')
+ROOT_PATH = os.path.dirname(__file__)
+sys.path.append(os.path.join(ROOT_PATH, 'DeepBox'))
 from deepbox import util, image_util
 from deepbox.model import Model
 
-IS_DEBUG = True
+IS_DEBUG = False
 
 
 def DEBUG(value, name=None, func=None):
@@ -252,7 +253,7 @@ class Preprocess(object):
     TEST_SIZE_RANGE = (384, 384)
     NET_SIZE = 224
     NET_CHANNEL = 3
-    MEAN_PATH = 'archive/ResNet-mean.mat'
+    MEAN_PATH = os.path.join(ROOT_PATH, 'archive/ResNet-mean.mat')
 
     def __init__(self,
                  num_test_crops=NUM_TEST_CROPS,
@@ -554,7 +555,7 @@ class Net(object):
 
 
 class ResNet(Net):
-    RESNET_PARAMS_PATH = 'archive/ResNet-50-params.mat'
+    RESNET_PARAMS_PATH = os.path.join(ROOT_PATH, 'archive/ResNet-50-params.mat')
     NUM_TEST_CROPS = 4
 
     def __init__(self,
