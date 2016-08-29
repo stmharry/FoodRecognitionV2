@@ -466,7 +466,7 @@ class Net(object):
         self.is_show = is_show
 
         (self.phase, self.phase_, self.phase_assign) = Net.get_assignable_variable(Net.Phase.NONE.value, 'phase', dtype=tf.int32)
-        self.class_names = Net.get_const_variable(Meta.CLASS_NAMES, 'class_names', shape=(len(Meta.CLASS_NAMES),), dtype=tf.string, collections=Net.NET_VARIABLES)
+        self.class_names = Net.get_const_variable(Meta.CLASS_NAMES, 'class_names', shape=(len(Meta.CLASS_NAMES),), dtype=tf.string, collections=Net.NET_COLLECTIONS)
         self.global_step = Net.get_const_variable(0, 'global_step')
         self.checkpoint = tf.train.get_checkpoint_state(Meta.WORKING_DIR)
 
@@ -815,7 +815,7 @@ class ResNet50(ResNet):
 
         self.finalize()
 
-    def train(self, iteration=0, feed_dict=dict()):
+    def train(self, iteration=0, feed_dict=dict(), save_per=1000):
         feed_dict[self.phase] = Net.Phase.TRAIN.value
 
         train_dict = dict(train=self.train_op)
@@ -834,7 +834,7 @@ class ResNet50(ResNet):
                      func=lambda **kwargs: self.model.summary(summary_writer=self.summary_writer, **kwargs)),
                 dict(interval=5,
                      func=lambda **kwargs: self.test(feed_dict=feed_dict)),
-                dict(interval=1000,
+                dict(interval=save_per,
                      func=lambda **kwargs: self.model.save(saver=self.saver, saver_kwargs=dict(save_path=os.path.join(Meta.WORKING_DIR, 'model')), **kwargs))])
 
     def test(self, iteration=1, feed_dict=dict()):
