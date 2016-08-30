@@ -2,9 +2,19 @@ import collections
 import json
 import requests
 
-response = requests.post('http://127.0.0.1:8000/classify', json={'url': [
-    'http://pic.pimg.tw/sinea100/1393852602-2597251841.jpg',
-    'http://the-sun.on.cc/cnt/lifestyle/20150710/photo/0710-00479-002b1.jpg']})
+response = requests.post('http://127.0.0.1:8080/classify', json={'images': [
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
+	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg"]})
 
 print('Raw JSON:')
 print(response.text)

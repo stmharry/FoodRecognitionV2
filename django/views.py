@@ -9,9 +9,10 @@ import collections
 import skimage.io
 import sys
 
-# RESNET_ROOT = '/var/django/ResidualNetworkV2'
-RESNET_ROOT = '/home/harry/Repository/FoodRecognitionV2'
-WORKING_DIR = '/mnt/data/dish-clean-save/2016-08-16-191753'
+RESNET_ROOT = '/vol/ResidualNetworkV2'
+WORKING_DIR = '/vol/tfmodel/2016-08-29-135229'
+BATCH_SIZE = 32
+NUM_TEST_CROPS = 8
 TOP_K = 6
 
 if RESNET_ROOT not in sys.path:
@@ -24,9 +25,9 @@ class NetWrapper(object):
     def __init__(self):
         Meta.test(working_dir=WORKING_DIR)
         self.producer = QueueProducer()
-        self.preprocess = Preprocess()
-        self.batch = Batch()
-        self.net = ResNet50()
+        self.preprocess = Preprocess(num_test_crops=NUM_TEST_CROPS)
+        self.batch = Batch(batch_size=BATCH_SIZE, num_test_crops=NUM_TEST_CROPS)
+        self.net = ResNet50(num_test_crops=NUM_TEST_CROPS)
         self.postprocess = Postprocess()
 
         with Timer('Building network...'):
@@ -55,12 +56,12 @@ class NetWrapper(object):
 
         return results
 
+    
+NET_WRAPPER = NetWrapper()
 
 class ClassifyService(APIView):
-    NET_WRAPPER = NetWrapper()
-
     @parser_classes((JSONParser,))
     @renderer_classes((JSONRenderer,))
     def post(self, request, format=None):
-        content = dict(results=ClassifyService.NET_WRAPPER.get_results(request.data['url']))
+        content = dict(results=NET_WRAPPER.get_results(request.data['images']))
         return Response(content)
