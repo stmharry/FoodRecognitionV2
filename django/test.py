@@ -1,23 +1,15 @@
 import collections
 import json
 import requests
+import time
 
-response = requests.post('http://127.0.0.1:8080/classify', json={'images': [
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg",
-	"http://a.ecimg.tw/pic/v1/data/item/201608/D/Y/A/J/0/0/DYAJ00-A9007AJY8000_57c4eee1ef0d8.jpg"]})
+json_obj = {'images': [
+    "http://pic.2bite.com/event/5642f19c518f6e735e8b499e/classify/c_be4b8be6b428465ba3ae6430cb632dcb.jpg",
+    "http://pic.2bite.com/event/5642f19c518f6e735e8b499e/classify/c_4798ea3195ca4b56a93e0fbc3d1227d8.jpg"]}
 
-print('Raw JSON:')
-print(response.text)
+for addr in ['http://classify.2bite.com:8080/classify', 'http://52.52.99.175:8080/classify']:
+    start = time.time()
+    response = requests.post(addr, json=json_obj)
 
-print('Decoded JSON:')
-print(json.dumps(json.loads(response.text, object_pairs_hook=collections.OrderedDict), indent=4))
+    print('%s: %.3f s' % (addr, time.time() - start))
+    print(json.dumps(json.loads(response.text, object_pairs_hook=collections.OrderedDict), indent=4))

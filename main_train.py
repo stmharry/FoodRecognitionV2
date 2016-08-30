@@ -1,12 +1,12 @@
 import time
 from ResNet import Meta, Blob, FileProducer, Preprocess, Batch, Net, ResNet50
 
-IMAGE_DIR = '/mnt/data/6_training_pic'
-WORKING_DIR = '/mnt/data/6-save/' + time.strftime('%Y-%m-%d-%H%M%S')
+IMAGE_DIR = '/mnt/data/dish-clean'
+WORKING_DIR = '/mnt/data/dish-clean-save/' + time.strftime('%Y-%m-%d-%H%M%S')
 IS_IMAGE_ALREADY_CHECKED = True
-LEARNING_RATE_DECAY_STEPS = 200
-ITERATION = 2000
-SAVE_PER = 1000
+LEARNING_RATE_DECAY_STEPS = 2500
+ITERATION = 20000
+SAVE_PER = 10000
 
 if __name__ == '__main__':
     Meta.train(image_dir=IMAGE_DIR, working_dir=WORKING_DIR)
