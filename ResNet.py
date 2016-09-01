@@ -10,7 +10,9 @@ import tensorflow as tf
 import time
 
 ROOT_PATH = os.path.dirname(__file__)
-sys.path.append(os.path.join(ROOT_PATH, 'DeepBox'))
+DEEPBOX_PATH = os.path.join(ROOT_PATH, 'DeepBox')
+if DEEPBOX_PATH not in sys.path:
+    sys.path.append(DEEPBOX_PATH)
 from deepbox import util, image_util
 from deepbox.model import Model
 
