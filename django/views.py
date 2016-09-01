@@ -9,8 +9,8 @@ import collections
 import skimage.io
 import sys
 
-RESNET_ROOT = '/vol/ResidualNetworkV2'
-WORKING_DIR = '/vol/tfmodel/2016-08-29-135229'
+RESNET_ROOT = ''  # TODO
+WORKING_DIR = ''  # TODO
 GPU_FRAC = 0.5
 BATCH_SIZE = 32 * GPU_FRAC
 NUM_TEST_CROPS = 8
