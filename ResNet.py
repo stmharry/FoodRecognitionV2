@@ -399,6 +399,8 @@ class Net(object):
     LEARNING_RATE_DECAY_RATE = 1.0
     WEIGHT_DECAY = 0.0
 
+    GPU_FRAC = 1.0
+
     @staticmethod
     def placeholder(name=None, shape=(), dtype=tf.float32, default=None):
         if default is None:
@@ -455,6 +457,7 @@ class Net(object):
                  learning_rate_decay_steps=LEARNING_RATE_DECAY_STEPS,
                  learning_rate_decay_rate=LEARNING_RATE_DECAY_RATE,
                  weight_decay=WEIGHT_DECAY,
+                 gpu_frac=GPU_FRAC,
                  is_train=False,
                  is_show=False):
         assert len(Meta.CLASS_NAMES), 'Only create net when Meta.CLASS_NAMES is not empty!'
@@ -462,6 +465,7 @@ class Net(object):
         self.learning_rate = Net.get_const_variable(learning_rate, 'learning_rate')
         self.learning_modes = learning_modes
         self.weight_decay = weight_decay
+        self.gpu_frac = gpu_frac
         self.is_train = is_train
         self.is_show = is_show
 
@@ -538,7 +542,9 @@ class Net(object):
             for phase in [Net.Phase.TRAIN, Net.Phase.TEST]}
 
     def finalize(self):
-        self.sess = tf.InteractiveSession(config=tf.ConfigProto(allow_soft_placement=True))
+        self.sess = tf.InteractiveSession(config=tf.ConfigProto(
+            allow_soft_placement=True,
+            gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=self.gpu_frac)))
         self.saver = tf.train.Saver(tf.get_collection(Net.NET_VARIABLES), keep_checkpoint_every_n_hours=1.0)
         self.summary_writer = tf.train.SummaryWriter(Meta.WORKING_DIR)
 
@@ -564,6 +570,7 @@ class ResNet(Net):
                  learning_rate_decay_steps=Net.LEARNING_RATE_DECAY_STEPS,
                  learning_rate_decay_rate=Net.LEARNING_RATE_DECAY_RATE,
                  weight_decay=Net.WEIGHT_DECAY,
+                 gpu_frac=Net.GPU_FRAC,
                  resnet_params_path=RESNET_PARAMS_PATH,
                  num_test_crops=NUM_TEST_CROPS,
                  is_train=False,
@@ -575,6 +582,7 @@ class ResNet(Net):
             learning_rate_decay_steps=learning_rate_decay_steps,
             learning_rate_decay_rate=learning_rate_decay_rate,
             weight_decay=weight_decay,
+            gpu_frac=gpu_frac,
             is_train=is_train,
             is_show=is_show)
 
@@ -768,6 +776,7 @@ class ResNet50(ResNet):
                  learning_rate_decay_steps=Net.LEARNING_RATE_DECAY_STEPS,
                  learning_rate_decay_rate=Net.LEARNING_RATE_DECAY_RATE,
                  weight_decay=Net.WEIGHT_DECAY,
+                 gpu_frac=Net.GPU_FRAC,
                  resnet_params_path=ResNet.RESNET_PARAMS_PATH,
                  num_test_crops=ResNet.NUM_TEST_CROPS,
                  is_train=False,
@@ -779,6 +788,7 @@ class ResNet50(ResNet):
             learning_rate_decay_steps=learning_rate_decay_steps,
             learning_rate_decay_rate=learning_rate_decay_rate,
             weight_decay=weight_decay,
+            gpu_frac=gpu_frac,
             resnet_params_path=resnet_params_path,
             num_test_crops=num_test_crops,
             is_train=is_train,

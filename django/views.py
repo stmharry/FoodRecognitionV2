@@ -11,12 +11,14 @@ import sys
 
 RESNET_ROOT = '/vol/ResidualNetworkV2'
 WORKING_DIR = '/vol/tfmodel/2016-08-29-135229'
-BATCH_SIZE = 32
+GPU_FRAC = 0.5
+BATCH_SIZE = 32 * GPU_FRAC
 NUM_TEST_CROPS = 8
 TOP_K = 6
 
 if RESNET_ROOT not in sys.path:
     sys.path.append(RESNET_ROOT)
+
 
 from ResNet import Meta, QueueProducer, Preprocess, Batch, Net, ResNet50, Postprocess, Timer
 
@@ -27,7 +29,7 @@ class NetWrapper(object):
         self.producer = QueueProducer()
         self.preprocess = Preprocess(num_test_crops=NUM_TEST_CROPS)
         self.batch = Batch(batch_size=BATCH_SIZE, num_test_crops=NUM_TEST_CROPS)
-        self.net = ResNet50(num_test_crops=NUM_TEST_CROPS)
+        self.net = ResNet50(num_test_crops=NUM_TEST_CROPS, gpu_frac=GPU_FRAC)
         self.postprocess = Postprocess()
 
         with Timer('Building network...'):
@@ -56,12 +58,13 @@ class NetWrapper(object):
 
         return results
 
-    
-NET_WRAPPER = NetWrapper()
 
 class ClassifyService(APIView):
+    NET_WRAPPER = NetWrapper()
+
     @parser_classes((JSONParser,))
     @renderer_classes((JSONRenderer,))
     def post(self, request, format=None):
-        content = dict(results=NET_WRAPPER.get_results(request.data['images']))
+        content = dict(results=ClassifyService.NET_WRAPPER.get_results(request.data['images']))
+
         return Response(content)
