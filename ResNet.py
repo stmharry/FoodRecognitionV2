@@ -13,10 +13,12 @@ ROOT_PATH = os.path.dirname(__file__)
 DEEPBOX_PATH = os.path.join(ROOT_PATH, 'DeepBox')
 if DEEPBOX_PATH not in sys.path:
     sys.path.append(DEEPBOX_PATH)
+
 from deepbox import util, image_util
 from deepbox.model import Model
 
 IS_DEBUG = False
+META = None
 
 
 def DEBUG(value, name=None, func=None):
@@ -32,6 +34,11 @@ def DEBUG(value, name=None, func=None):
     return tf.Print(value, [show], '%s: ' % name)
 
 
+def set_meta(meta):
+    global META
+    META = meta
+
+
 def prob_list(x):
     if not isinstance(x, list):
         return [x]
@@ -45,25 +52,30 @@ class Meta(object):
     CLASS_NAMES = list()
 
     @staticmethod
-    def train(image_dir, working_dir=WORKING_DIR):
-        Meta.WORKING_DIR = working_dir
-        if not os.path.isdir(Meta.WORKING_DIR):
-            os.makedirs(Meta.WORKING_DIR)
+    def train(image_dir, working_dir=WORKING_DIR, classnames_filename=CLASSNAMES_FILENAME):
+        if not os.path.isdir(working_dir):
+            os.makedirs(working_dir)
 
-        Meta.CLASS_NAMES = list()
+        class_names = list()
         for class_name in os.listdir(image_dir):
             class_dir = os.path.join(image_dir, class_name)
             if not class_name.startswith('.') and os.path.isdir(class_dir):
-                Meta.CLASS_NAMES.append(class_name)
-        np.savetxt(os.path.join(Meta.WORKING_DIR, Meta.CLASSNAMES_FILENAME), Meta.CLASS_NAMES, delimiter=',', fmt='%s')
+                class_names.append(class_name)
+        np.savetxt(os.path.join(working_dir, classnames_filename), class_names, delimiter=',', fmt='%s')
+
+        return Meta(working_dir=working_dir, class_names=class_names)
 
     @staticmethod
-    def test(working_dir=WORKING_DIR):
-        Meta.WORKING_DIR = working_dir
-
-        classnames_path = os.path.join(Meta.WORKING_DIR, Meta.CLASSNAMES_FILENAME)
+    def test(working_dir=WORKING_DIR, classnames_filename=CLASSNAMES_FILENAME):
+        classnames_path = os.path.join(working_dir, classnames_filename)
         if os.path.isfile(classnames_path):
-            Meta.CLASS_NAMES = np.loadtxt(classnames_path, dtype=np.str, delimiter=',')
+            class_names = np.loadtxt(classnames_path, dtype=np.str, delimiter=',')
+
+        return Meta(working_dir=working_dir, class_names=class_names)
+
+    def __init__(self, working_dir=WORKING_DIR, class_names=CLASS_NAMES):
+        self.working_dir = working_dir
+        self.class_names = class_names
 
 
 class Blob(object):
@@ -179,7 +191,7 @@ class FileProducer(BaseProducer):
         filename_list = list()
         classname_list = list()
 
-        for class_name in Meta.CLASS_NAMES:
+        for class_name in META.class_names:
             class_dir = os.path.join(image_dir, class_name)
             for (file_dir, _, file_names) in os.walk(class_dir):
                 for file_name in file_names:
@@ -190,7 +202,7 @@ class FileProducer(BaseProducer):
                     filename_list.append(os.path.join(file_dir, file_name))
                     classname_list.append(class_name)
 
-        label_list = map(Meta.CLASS_NAMES.index, classname_list)
+        label_list = map(META.class_names.index, classname_list)
 
         if check:
             num_file_list = list()
@@ -462,7 +474,7 @@ class Net(object):
                  gpu_frac=GPU_FRAC,
                  is_train=False,
                  is_show=False):
-        assert len(Meta.CLASS_NAMES), 'Only create net when Meta.CLASS_NAMES is not empty!'
+        assert len(META.class_names), 'Only create net when META.class_names is not empty!'
 
         self.learning_rate = Net.get_const_variable(learning_rate, 'learning_rate')
         self.learning_modes = learning_modes
@@ -472,9 +484,9 @@ class Net(object):
         self.is_show = is_show
 
         (self.phase, self.phase_, self.phase_assign) = Net.get_assignable_variable(Net.Phase.NONE.value, 'phase', dtype=tf.int32)
-        self.class_names = Net.get_const_variable(Meta.CLASS_NAMES, 'class_names', shape=(len(Meta.CLASS_NAMES),), dtype=tf.string, collections=Net.NET_COLLECTIONS)
+        self.class_names = Net.get_const_variable(META.class_names, 'class_names', shape=(len(META.class_names),), dtype=tf.string, collections=Net.NET_COLLECTIONS)
         self.global_step = Net.get_const_variable(0, 'global_step')
-        self.checkpoint = tf.train.get_checkpoint_state(Meta.WORKING_DIR)
+        self.checkpoint = tf.train.get_checkpoint_state(META.working_dir)
 
         if (learning_rate_decay_steps > 0) and (learning_rate_decay_rate < 1.0):
             self.learning_rate = tf.train.exponential_decay(
@@ -495,9 +507,9 @@ class Net(object):
     def make_stat(self):
         assert hasattr(self, 'prob'), 'net has no attribute "prob"!'
 
-        self.target = tf.one_hot(self.label, len(Meta.CLASS_NAMES))
+        self.target = tf.one_hot(self.label, len(META.class_names))
         self.target_frac = tf.reduce_mean(self.target, 0)
-        self.loss = - tf.reduce_mean(self.target * tf.log(self.prob + util.EPSILON)) * len(Meta.CLASS_NAMES)
+        self.loss = - tf.reduce_mean(self.target * tf.log(self.prob + util.EPSILON)) * len(META.class_names)
         regularization_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
         if regularization_losses:
             self.loss += tf.add_n(regularization_losses)
@@ -548,7 +560,7 @@ class Net(object):
             allow_soft_placement=True,
             gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=self.gpu_frac)))
         self.saver = tf.train.Saver(tf.get_collection(Net.NET_VARIABLES), keep_checkpoint_every_n_hours=1.0)
-        self.summary_writer = tf.train.SummaryWriter(Meta.WORKING_DIR)
+        self.summary_writer = tf.train.SummaryWriter(META.working_dir)
 
         self.sess.run(tf.initialize_all_variables())
         if self.checkpoint:
@@ -811,7 +823,7 @@ class ResNet50(ResNet):
 
         with tf.variable_scope('fc'):
             self.v6 = self.avg_pool(self.v5, 'avg_pool', size=(7, 7))
-            self.v7 = self.conv(self.v6, 'fc', out_channel=len(Meta.CLASS_NAMES), biased=True)
+            self.v7 = self.conv(self.v6, 'fc', out_channel=len(META.class_names), biased=True)
             self.v8 = tf.squeeze(self.softmax(self.v7, 3), (1, 2))
 
         self.feat = self.segment_mean(self.v6)
@@ -847,7 +859,7 @@ class ResNet50(ResNet):
                 dict(interval=5,
                      func=lambda **kwargs: self.test(feed_dict=feed_dict)),
                 dict(interval=save_per,
-                     func=lambda **kwargs: self.model.save(saver=self.saver, saver_kwargs=dict(save_path=os.path.join(Meta.WORKING_DIR, 'model')), **kwargs))])
+                     func=lambda **kwargs: self.model.save(saver=self.saver, saver_kwargs=dict(save_path=os.path.join(META.working_dir, 'model')), **kwargs))])
 
     def test(self, iteration=1, feed_dict=dict()):
         feed_dict[self.phase] = Net.Phase.TEST.value
