@@ -471,6 +471,7 @@ class Net(object):
 
     NET_VARIABLES = 'net_variables'
     NET_COLLECTIONS = [tf.GraphKeys.VARIABLES, NET_VARIABLES]
+    MODEL_FILENAME = 'model'
 
     LEARNING_RATE = 1e-1
     LEARNING_RATE_MODES = dict(normal=1.0, slow=0.0)
@@ -551,7 +552,7 @@ class Net(object):
         (self.phase, self.phase_, self.phase_assign) = Net.get_assignable_variable(Net.Phase.NONE.value, 'phase', dtype=tf.int32)
         self.class_names = Net.get_const_variable(META.class_names, 'class_names', shape=(len(META.class_names),), dtype=tf.string, collections=Net.NET_COLLECTIONS)
         self.global_step = Net.get_const_variable(0, 'global_step')
-        self.checkpoint = tf.train.get_checkpoint_state(META.working_dir)
+        self.model_path = os.path.join(META.working_dir, Net.MODEL_FILENAME)
 
         if (learning_rate_decay_steps > 0) and (learning_rate_decay_rate < 1.0):
             self.learning_rate = tf.train.exponential_decay(
@@ -624,13 +625,13 @@ class Net(object):
         self.sess = tf.InteractiveSession(config=tf.ConfigProto(
             allow_soft_placement=True,
             gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=self.gpu_frac)))
-        self.saver = tf.train.Saver(tf.get_collection(Net.NET_VARIABLES), keep_checkpoint_every_n_hours=1.0)
+        self.saver = tf.train.Saver(tf.get_collection(Net.NET_VARIABLES))
         self.summary_writer = tf.train.SummaryWriter(META.working_dir)
 
         self.sess.run(tf.initialize_all_variables())
-        if self.checkpoint:
-            print('Model restored from %s' % self.checkpoint.model_checkpoint_path)
-            self.saver.restore(tf.get_default_session(), self.checkpoint.model_checkpoint_path)
+        if os.path.isfile(self.model_path):
+            print('Model restored from %s' % self.model_path)
+            self.saver.restore(tf.get_default_session(), self.model_path)
         self.model = Model(self.global_step)
 
     def start(self, default_phase=Phase.NONE):
@@ -667,11 +668,11 @@ class ResNet(Net):
 
         self.resnet_params_path = resnet_params_path
         self.num_test_crops = num_test_crops
-        if not self.checkpoint:
+        if not os.path.isfile(self.model_path):
             self.resnet_params = scipy.io.loadmat(resnet_params_path)
 
     def get_initializer(self, name, index, is_vector, default):
-        if self.checkpoint:
+        if os.path.isfile(self.model_path):
             return None
         elif name in self.resnet_params:
             print('%s initialized from ResNet' % name)
@@ -831,6 +832,7 @@ class ResNet(Net):
         value = value / tf.reduce_sum(value, reduction_indices=dim, keep_dims=True)
         return value
 
+    '''
     def test_segment_mean(self, value):
         batch_size = tf.shape(value)[0] / self.num_test_crops
         segment_ids = tf.reshape(tf.tile(tf.reshape(tf.range(batch_size), (-1, 1)), (1, self.num_test_crops)), (-1,))
@@ -845,6 +847,19 @@ class ResNet(Net):
             (Net.Phase.TEST, lambda: self.test_segment_mean(value))])
 
         value.set_shape((None,) + shape[1:])
+        return value
+    '''
+
+    def rebatch(self, value):
+        num_crops = self.case([
+            (Net.Phase.TRAIN, lambda: tf.constant(1, dtype=tf.int32)),
+            (Net.Phase.TEST, lambda: tf.constant(self.num_test_crops, dtype=tf.int32))])
+
+        batch_size = tf.shape(value)[0]
+        size = ImageUtil.get_size(value)
+
+        value = tf.reshape(value, (batch_size / num_crops, num_crops) + size)
+        value.set_shape((None, None) + size)
         return value
 
 
@@ -891,8 +906,12 @@ class ResNet50(ResNet):
             self.v7 = self.conv(self.v6, 'fc', out_channel=len(META.class_names), biased=True)
             self.v8 = tf.squeeze(self.softmax(self.v7, 3), (1, 2))
 
-        self.feat = self.segment_mean(self.v6)
-        self.prob = self.segment_mean(self.v8)
+        _feat = self.rebatch(self.v6)
+        self.feat = tf.reduce_mean(_feat, 1)
+        _prob = self.rebatch(self.v8)
+        self.prob = tf.reduce_mean(_prob, 1)
+        _consistency = - tf.reduce_sum(tf.expand_dims(self.prob, 1) * tf.log(_prob), 2)
+        self.consistency = tf.exp(- tf.reduce_mean(_consistency, 1))
 
         self.make_stat()
 
@@ -904,7 +923,7 @@ class ResNet50(ResNet):
 
         self.finalize()
 
-    def train(self, iteration=0, feed_dict=dict(), save_per=1000):
+    def train(self, iteration=0, feed_dict=dict(), save_per=-1):
         feed_dict[self.phase] = Net.Phase.TRAIN.value
 
         train_dict = dict(train=self.train_op)
@@ -924,7 +943,7 @@ class ResNet50(ResNet):
                 dict(interval=5,
                      func=lambda **kwargs: self.test(feed_dict=feed_dict)),
                 dict(interval=save_per,
-                     func=lambda **kwargs: self.model.save(saver=self.saver, saver_kwargs=dict(save_path=os.path.join(META.working_dir, 'model')), **kwargs))])
+                     func=lambda **kwargs: self.model.save(saver=self.saver, saver_kwargs=dict(save_path=self.model_path, global_step=None), **kwargs))])
 
     def test(self, iteration=1, feed_dict=dict()):
         feed_dict[self.phase] = Net.Phase.TEST.value
