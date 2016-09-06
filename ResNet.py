@@ -14,7 +14,7 @@ DEEPBOX_PATH = os.path.join(ROOT_PATH, 'DeepBox')
 if DEEPBOX_PATH not in sys.path:
     sys.path.append(DEEPBOX_PATH)
 
-from deepbox import util, image_util
+from deepbox import util
 from deepbox.model import Model
 
 IS_DEBUG = False
@@ -76,6 +76,67 @@ class Meta(object):
     def __init__(self, working_dir=WORKING_DIR, class_names=CLASS_NAMES):
         self.working_dir = working_dir
         self.class_names = class_names
+
+
+class ImageUtil(object):
+    @staticmethod
+    def get_shape(value):
+        return tuple(value.get_shape().as_list())
+
+    @staticmethod
+    def get_size(value):
+        return ImageUtil.get_shape(value)[1:3]
+
+    @staticmethod
+    def get_channel(value):
+        return ImageUtil.get_shape(value)[3]
+
+    @staticmethod
+    def random(lower, upper, dtype=tf.float32):
+        return tf.random_uniform((), lower, upper, dtype=dtype)
+
+    @staticmethod
+    def random_resize(value, size_range, max_log_aspect_ratio):
+        aspect_ratio = tf.exp(ImageUtil.random(-max_log_aspect_ratio, +max_log_aspect_ratio))
+        new_shorter_size = ImageUtil.random(size_range[0], size_range[1])
+
+        new_height_and_width = tf.cond(
+            tf.less(aspect_ratio, 1.0),
+            lambda: (new_shorter_size / aspect_ratio, new_shorter_size),
+            lambda: (new_shorter_size, new_shorter_size * aspect_ratio),
+        )
+
+        value = tf.expand_dims(value, 0)
+        value = tf.image.resize_bilinear(value, tf.to_int32(tf.pack(new_height_and_width)))
+        value = tf.squeeze(value, [0])
+        return value
+
+    @staticmethod
+    def random_crop(value, size):
+        shape = tf.shape(value)
+        height = shape[0]
+        width = shape[1]
+
+        offset_height = ImageUtil.random(0, height - size + 1, dtype=tf.int32)
+        offset_width = ImageUtil.random(0, width - size + 1, dtype=tf.int32)
+
+        value = tf.slice(
+            value,
+            tf.pack((offset_height, offset_width, 0)),
+            tf.pack((size, size, -1)))
+        value.set_shape((size, size, 3))
+        return value
+
+    @staticmethod
+    def random_flip(value):
+        value = tf.image.random_flip_left_right(value)
+        return value
+
+    @staticmethod
+    def random_adjust_rgb(value, max_delta=63, contrast_range=(0.5, 1.5)):
+        value = tf.image.random_brightness(value, max_delta=max_delta)
+        value = tf.image.random_contrast(value, lower=contrast_range[0], upper=contrast_range[1])
+        return value
 
 
 class Blob(object):
@@ -263,8 +324,10 @@ class FileProducer(BaseProducer):
 
 class Preprocess(object):
     NUM_TEST_CROPS = 4
-    TRAIN_SIZE_RANGE = (256, 512)
-    TEST_SIZE_RANGE = (384, 384)
+    TRAIN_SIZE_RANGE = (224, 320)
+    TEST_SIZE_RANGE = (256, 256)
+    MAX_LOG_ASPECT_RATIO = 0.75
+
     NET_SIZE = 224
     NET_CHANNEL = 3
     MEAN_PATH = os.path.join(ROOT_PATH, 'archive/ResNet-mean.mat')
@@ -273,6 +336,7 @@ class Preprocess(object):
                  num_test_crops=NUM_TEST_CROPS,
                  train_size_range=TRAIN_SIZE_RANGE,
                  test_size_range=TEST_SIZE_RANGE,
+                 max_log_aspect_ratio=MAX_LOG_ASPECT_RATIO,
                  net_size=NET_SIZE,
                  net_channel=NET_CHANNEL,
                  mean_path=MEAN_PATH):
@@ -280,6 +344,7 @@ class Preprocess(object):
         self.num_test_crops = num_test_crops
         self.train_size_range = train_size_range
         self.test_size_range = test_size_range
+        self.max_log_aspect_ratio = max_log_aspect_ratio
 
         self.net_size = net_size
         self.net_channel = net_channel
@@ -289,10 +354,10 @@ class Preprocess(object):
         self.mean = scipy.io.loadmat(mean_path)['mean']
 
     def _train(self, image):
-        image = image_util.random_resize(image, size_range=self.train_size_range)
-        image = image_util.random_crop(image, size=self.net_size)
-        image = image_util.random_flip(image)
-        image = image_util.random_adjust_rgb(image)
+        image = ImageUtil.random_resize(image, size_range=self.train_size_range, max_log_aspect_ratio=self.max_log_aspect_ratio)
+        image = ImageUtil.random_crop(image, size=self.net_size)
+        image = ImageUtil.random_flip(image)
+        image = ImageUtil.random_adjust_rgb(image)
         image = image - self.mean
         image.set_shape(self.shape)
 
@@ -302,9 +367,9 @@ class Preprocess(object):
         return Blob(images=map(self._train, blob.images), labels=blob.labels)
 
     def _test_map(self, image):
-        image = image_util.random_resize(image, size_range=self.test_size_range)
-        image = image_util.random_crop(image, size=self.net_size)
-        image = image_util.random_flip(image)
+        image = ImageUtil.random_resize(image, size_range=self.test_size_range, max_log_aspect_ratio=0.0)
+        image = ImageUtil.random_crop(image, size=self.net_size)
+        image = ImageUtil.random_flip(image)
         image = image - self.mean
 
         return image
@@ -382,7 +447,7 @@ class Batch(object):
                 capacity=self.test_capacity),
             control_inputs=[self.test_assign])
 
-        shape = image_util.get_shape(image)
+        shape = ImageUtil.get_shape(image)
         image = tf.reshape(image, (-1,) + shape[2:])
 
         return Blob(images=image, labels=label)
@@ -619,7 +684,7 @@ class ResNet(Net):
             return default
 
     def conv(self, value, conv_name, out_channel, size=(1, 1), stride=(1, 1), padding='SAME', biased=False, norm_name=None, activation_fn=None, learning_mode='normal'):
-        in_channel = image_util.get_channel(value)
+        in_channel = ImageUtil.get_channel(value)
 
         if self.learning_modes[learning_mode] > 0:
             collections = Net.NET_COLLECTIONS + [learning_mode]
@@ -733,7 +798,7 @@ class ResNet(Net):
         return value
 
     def unit(self, value, name, subsample, out_channel, learning_mode='normal'):
-        in_channel = image_util.get_channel(value)
+        in_channel = ImageUtil.get_channel(value)
 
         if subsample:
             stride = (2, 2)
@@ -773,7 +838,7 @@ class ResNet(Net):
         return value
 
     def segment_mean(self, value):
-        shape = image_util.get_shape(value)
+        shape = ImageUtil.get_shape(value)
 
         value = self.case([
             (Net.Phase.TRAIN, lambda: value),
@@ -918,7 +983,7 @@ class Consumer(object):
         test_batch_size = self.batch_size / self.num_test_crops
         self.queue = tf.PaddingFIFOQueue(
             self.capacity,
-            shapes=[(None,) + image_util.get_size(value) for value in values],
+            shapes=[(None,) + ImageUtil.get_size(value) for value in values],
             dtypes=[value.dtype for value in values])
         enqueue = self.queue.enqueue(values)
         queue_runner = tf.train.QueueRunner(self.queue, [enqueue])
@@ -935,7 +1000,7 @@ class Consumer(object):
         values = prob_list(self.queue.dequeue_many(dequeue_size))
         values_ = list()
         for value in values:
-            shape = image_util.get_shape(value)
+            shape = ImageUtil.get_shape(value)
             value = tf.reshape(value, (-1,) + shape[2:])
             values_.append(value)
         return Blob(values=values_)
