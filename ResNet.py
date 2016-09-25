@@ -216,7 +216,6 @@ class QueueProducer(BaseProducer):
             dtype=dtype)
         (self.queue, self.enqueue) = self.get_queue_enqueue(values=[self.placeholder], dtype=dtype, shape=shape, auto=False)
         image = self.queue.dequeue()
-        image = DEBUG(image, name='QueueProducer.image', func=tf.shape)
         return Blob(images=image)
 
     def kwargs(self, image):
@@ -903,12 +902,14 @@ class ResNet50(ResNet):
 
         with tf.variable_scope('fc'):
             self.v6 = self.avg_pool(self.v5, 'avg_pool', size=(7, 7))
+            self.v6_ = tf.squeeze(self.v6, (1, 2))
             self.v7 = self.conv(self.v6, 'fc', out_channel=len(META.class_names), biased=True)
-            self.v8 = tf.squeeze(self.softmax(self.v7, 3), (1, 2))
+            self.v8 = self.softmax(self.v7, 3)
+            self.v8_ = tf.squeeze(self.v8, (1, 2))
 
-        _feat = self.rebatch(self.v6)
+        _feat = self.rebatch(self.v6_)
         self.feat = tf.reduce_mean(_feat, 1)
-        _prob = self.rebatch(self.v8)
+        _prob = self.rebatch(self.v8_)
         self.prob = tf.reduce_mean(_prob, 1)
         _consistency = - tf.reduce_sum(tf.expand_dims(self.prob, 1) * tf.log(_prob), 2)
         self.consistency = tf.exp(- tf.reduce_mean(_consistency, 1))
@@ -997,7 +998,6 @@ class Consumer(object):
 
     def build(self, blob):
         values = blob.values
-        values = [DEBUG(value, name='Consumer.value(queued)', func=tf.shape) for value in values]
 
         test_batch_size = self.batch_size / self.num_test_crops
         self.queue = tf.PaddingFIFOQueue(
@@ -1012,9 +1012,6 @@ class Consumer(object):
         dequeue_size = (total_size - 1) / test_batch_size + 1
         self.total_size = tf.placeholder_with_default(self.capacity * test_batch_size, shape=())
         self.assign = total_size.assign(self.total_size)
-
-        self.assign = DEBUG(self.assign, name='Consumer.assign')
-        dequeue_size = tf.Print(dequeue_size, [dequeue_size, self.queue.size()], 'Consumer.dequeue_size, Consumer.queue.size: ')
 
         values = prob_list(self.queue.dequeue_many(dequeue_size))
         values_ = list()
