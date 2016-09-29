@@ -925,7 +925,7 @@ class ResNet50(ResNet):
         self.finalize()
 
     def train(self, iteration=0, feed_dict=dict(), save_per=-1):
-        feed_dict[self.phase] = Net.Phase.TRAIN.value
+        self.sess.run(self.phase_assign, feed_dict={self.phase: Net.Phase.TRAIN.value})
 
         train_dict = dict(train=self.train_op)
         show_dict = self.show_dict[Net.Phase.TRAIN]
@@ -947,7 +947,7 @@ class ResNet50(ResNet):
                      func=lambda **kwargs: self.model.save(saver=self.saver, saver_kwargs=dict(save_path=self.model_path, global_step=None), **kwargs))])
 
     def test(self, iteration=1, feed_dict=dict()):
-        feed_dict[self.phase] = Net.Phase.TEST.value
+        self.sess.run(self.phase_assign, feed_dict={self.phase: Net.Phase.TEST.value})
 
         show_dict = self.show_dict[Net.Phase.TEST]
         summary_dict = dict(summary=self.summary[Net.Phase.TEST])
@@ -963,7 +963,7 @@ class ResNet50(ResNet):
                      func=lambda **kwargs: self.model.summary(summary_writer=self.summary_writer, **kwargs))])
 
     def online(self, feed_dict=dict(), fetch=dict()):
-        feed_dict[self.phase] = Net.Phase.TEST.value
+        self.sess.run(self.phase_assign, feed_dict={self.phase: Net.Phase.TEST.value})
 
         self.model.test(
             iteration=1,
